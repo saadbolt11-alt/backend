@@ -83,7 +83,7 @@ router.get('/hierarchy/:hierarchyId', protect, async (req, res) => {
         l.latitude,
         l.updated_at AS last_comm_time,
         CASE 
-          WHEN l.updated_at >= now() - interval '5 minutes' THEN 'Online'
+          WHEN (d.metadata->>'status') = 'active' THEN 'Online'
           ELSE 'Offline'
         END AS status,
         COALESCE((l.data->>'GFR')::numeric, 0) AS gfr,
@@ -111,8 +111,8 @@ router.get('/hierarchy/:hierarchyId', protect, async (req, res) => {
     // Add status filter
     if (status !== 'all') {
       const statusCondition = status === 'online' 
-        ? `l.updated_at >= now() - interval '5 minutes'`
-        : `(l.updated_at IS NULL OR l.updated_at < now() - interval '5 minutes')`;
+        ? `(d.metadata->>'status') = 'active'`
+        : `(d.metadata->>'status') != 'active' OR (d.metadata->>'status') IS NULL`;
       
       query += search ? ` AND ${statusCondition}` : ` WHERE ${statusCondition}`;
     }
@@ -142,8 +142,10 @@ router.get('/hierarchy/:hierarchyId', protect, async (req, res) => {
       )
       SELECT 
         COUNT(DISTINCT d.id) as total_devices,
-        COUNT(DISTINCT CASE WHEN l.updated_at >= now() - interval '5 minutes' THEN d.id END) as online_devices,
-        COUNT(DISTINCT dt.type_name) as device_types,
+        COUNT(DISTINCT CASE WHEN (d.metadata->>'status') = 'active' THEN d.id END) as online_devices,
+        (SELECT COUNT(*) FROM device_alarms da 
+         JOIN device dev ON da.device_serial = dev.serial_number 
+         WHERE dev.hierarchy_id IN (SELECT id FROM hierarchy_cte)) as total_alarms,
         COUNT(DISTINCT d.hierarchy_id) as locations
       FROM device d
       JOIN device_type dt ON d.device_type_id = dt.id
@@ -211,7 +213,7 @@ router.get('/hierarchy/:hierarchyId', protect, async (req, res) => {
           totalDevices: parseInt(stats.total_devices) || 0,
           onlineDevices: parseInt(stats.online_devices) || 0,
           offlineDevices: (parseInt(stats.total_devices) || 0) - (parseInt(stats.online_devices) || 0),
-          deviceTypes: parseInt(stats.device_types) || 0,
+          totalAlarms: parseInt(stats.total_alarms) || 0,
           locations: parseInt(stats.locations) || 0
         },
         filters: {
@@ -354,8 +356,10 @@ router.get('/', protect, async (req, res) => {
     const statsQuery = `
       SELECT 
         COUNT(DISTINCT d.id) as total_devices,
-        COUNT(DISTINCT CASE WHEN l.updated_at >= now() - interval '5 minutes' THEN d.id END) as online_devices,
-        COUNT(DISTINCT dt.type_name) as device_types
+        COUNT(DISTINCT CASE WHEN (d.metadata->>'status') = 'active' THEN d.id END) as online_devices,
+        (SELECT COUNT(*) FROM device_alarms da 
+         JOIN device dev ON da.device_serial = dev.serial_number 
+         WHERE dev.company_id = $1) as total_alarms
       FROM device d
       JOIN device_type dt ON d.device_type_id = dt.id
       LEFT JOIN device_latest l ON l.serial_number= d.serial_number
@@ -415,7 +419,7 @@ router.get('/', protect, async (req, res) => {
           totalDevices: parseInt(stats.total_devices) || 0,
           onlineDevices: parseInt(stats.online_devices) || 0,
           offlineDevices: (parseInt(stats.total_devices) || 0) - (parseInt(stats.online_devices) || 0),
-          deviceTypes: parseInt(stats.device_types) || 0
+          totalAlarms: parseInt(stats.total_alarms) || 0
         },
         filters: {
           availableDeviceTypes: deviceTypesResult.rows.map(row => row.type_name),
@@ -466,7 +470,7 @@ router.get('/:id', protect, async (req, res) => {
         l.updated_at AS last_comm_time,
         l.received_at,
         CASE 
-          WHEN l.updated_at >= now() - interval '5 minutes' THEN 'Online'
+          WHEN (d.metadata->>'status') = 'active' THEN 'Online'
           ELSE 'Offline'
         END AS status,
         l.data AS latest_data
