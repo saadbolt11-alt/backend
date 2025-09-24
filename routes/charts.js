@@ -31,8 +31,8 @@ router.get('/device/:deviceId', protect, async (req, res) => {
     }
 
     // Get chart data
-    const chartData = await Device.getDeviceChartData(deviceId, timeRange);
-    const latestData = await Device.getLatestDeviceData(deviceId);
+    const chartData = await Device.getDeviceChartData(device.serial_number, timeRange);
+    const latestData = await Device.getLatestDeviceData(device.serial_number);
 
     res.json({
       success: true,
@@ -209,15 +209,15 @@ router.get('/device/:deviceId/realtime', protect, async (req, res) => {
       FROM device_latest dl
       JOIN device d ON dl.serial_number = d.serial_number
       JOIN device_type dt ON d.device_type_id = dt.id
-      WHERE d.id = $1
+      WHERE d.serial_number = $1
     `;
 
-    const result = await database.query(query, [deviceId]);
+    const result = await database.query(query, [device.serial_number]);
     const latestData = result.rows[0];
 
     if (!latestData) {
       // Fallback to latest device_data entry
-      const fallbackData = await Device.getLatestDeviceData(deviceId);
+      const fallbackData = await Device.getLatestDeviceData(device.serial_number);
       
       return res.json({
         success: true,

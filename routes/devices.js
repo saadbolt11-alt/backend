@@ -517,12 +517,12 @@ router.get('/:id', protect, async (req, res) => {
         longitude,
         latitude
       FROM device_data
-      WHERE device_id = $1 AND created_at >= now() - interval '24 hours'
+      WHERE serial_number = $1 AND created_at >= now() - interval '24 hours'
       ORDER BY created_at DESC
       LIMIT 100
     `;
 
-    const historyResult = await database.query(historyQuery, [deviceId]);
+    const historyResult = await database.query(historyQuery, [device.device_serial]);
 
     res.json({
       success: true,

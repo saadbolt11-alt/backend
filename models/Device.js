@@ -41,7 +41,7 @@ class Device {
     return result.rows.map(row => new Device(row));
   }
 
-  static async getDeviceChartData(device_id, timeRange = 'day') {
+  static async getDeviceChartData(serial_number, timeRange = 'day') {
     let timeFilter = '';
     let groupBy = '';
     
@@ -72,9 +72,9 @@ class Device {
       SELECT dt.type_name 
       FROM device d 
       JOIN device_type dt ON d.device_type_id = dt.id 
-      WHERE d.id = $1
+      WHERE d.serial_number = $1
     `;
-    const deviceTypeResult = await database.query(deviceTypeQuery, [device_id]);
+    const deviceTypeResult = await database.query(deviceTypeQuery, [serial_number]);
     const deviceType = deviceTypeResult.rows[0]?.type_name;
 
     // Build dynamic query based on device type
@@ -148,7 +148,7 @@ class Device {
       ORDER BY time_period
     `;
 
-    const result = await database.query(query, [device_id]);
+    const result = await database.query(query, [serial_number]);
     return result.rows;
   }
 
@@ -178,72 +178,122 @@ class Device {
         groupBy = "date_trunc('minute', dd.created_at)";
     }
 
-    const query = `
+    // Primary aggregation from device_data
+    const aggQuery = `
 WITH RECURSIVE hierarchy_cte AS (
-        -- Start from the selected hierarchy
-        SELECT id
-        FROM hierarchy
-        WHERE id = $1
-
-        UNION ALL
-
-        -- Recursive step: fetch all children
-        SELECT h.id
-        FROM hierarchy h
-        JOIN hierarchy_cte c ON h.parent_id = c.id
-      ),
-      device_data_minute AS (
-        -- Average per device per time period
-        SELECT 
-          dd.serial_number as device_id,
-          ${groupBy} AS minute,
-          AVG((dd.data->>'GFR')::numeric) AS avg_gfr,
-          AVG((dd.data->>'GOR')::numeric) AS avg_gor,
-          AVG((dd.data->>'GVF')::numeric) AS avg_gvf,
-          AVG((dd.data->>'OFR')::numeric) AS avg_ofr,
-          AVG((dd.data->>'WFR')::numeric) AS avg_wfr,
-          AVG((dd.data->>'WLR')::numeric) AS avg_wlr,
-          AVG((dd.data->>'PressureAvg')::numeric) AS avg_pressure,
-          AVG((dd.data->>'TemperatureAvg')::numeric) AS avg_temp
-        FROM device_data dd
-        JOIN device d ON d.serial_number= dd.serial_number
-        WHERE d.hierarchy_id IN (SELECT id FROM hierarchy_cte) AND ${timeFilter}
-        GROUP BY dd.serial_number, ${groupBy}
-      ),
-      summed AS (
-        -- Sum across devices per time period
-        SELECT 
-          minute,
-          SUM(avg_gfr) AS total_gfr,
-          SUM(avg_gor) AS total_gor,
-          SUM(avg_ofr) AS total_ofr,
-          SUM(avg_wfr) AS total_wfr,
-          CASE 
-            WHEN COALESCE(SUM(avg_gfr), 0) + COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0) > 0 
-            THEN COALESCE(SUM(avg_gfr), 0) * 100.0 / (COALESCE(SUM(avg_gfr), 0) + COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0))
-            ELSE 0 
-          END AS total_gvf,
-          CASE 
-            WHEN COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0) > 0 
-            THEN COALESCE(SUM(avg_wfr), 0) * 100.0 / (COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0))
-            ELSE 0 
-          END AS total_wlr,
-          AVG(avg_pressure) AS avg_pressure,
-          AVG(avg_temp) AS avg_temp,
-          COUNT(DISTINCT device_id) as device_count
-        FROM device_data_minute
-        GROUP BY minute
-      )
-      SELECT * 
-      FROM summed
-      ORDER BY minute
+    SELECT id
+    FROM hierarchy
+    WHERE id = $1
+    UNION ALL
+    SELECT h.id
+    FROM hierarchy h
+    JOIN hierarchy_cte c ON h.parent_id = c.id
+),
+device_data_minute AS (
+    SELECT 
+      dd.serial_number as device_id,
+      ${groupBy} AS minute,
+      AVG((dd.data->>'GFR')::numeric) AS avg_gfr,
+      AVG((dd.data->>'GOR')::numeric) AS avg_gor,
+      AVG((dd.data->>'GVF')::numeric) AS avg_gvf,
+      AVG((dd.data->>'OFR')::numeric) AS avg_ofr,
+      AVG((dd.data->>'WFR')::numeric) AS avg_wfr,
+      AVG((dd.data->>'WLR')::numeric) AS avg_wlr,
+      AVG((dd.data->>'PressureAvg')::numeric) AS avg_pressure,
+      AVG((dd.data->>'TemperatureAvg')::numeric) AS avg_temp
+    FROM device_data dd
+    JOIN device d ON d.serial_number= dd.serial_number
+    WHERE d.hierarchy_id IN (SELECT id FROM hierarchy_cte) AND ${timeFilter}
+    GROUP BY dd.serial_number, ${groupBy}
+),
+summed AS (
+    SELECT 
+      minute,
+      SUM(avg_gfr) AS total_gfr,
+      SUM(avg_gor) AS total_gor,
+      SUM(avg_ofr) AS total_ofr,
+      SUM(avg_wfr) AS total_wfr,
+      CASE 
+        WHEN COALESCE(SUM(avg_gfr), 0) + COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0) > 0 
+        THEN COALESCE(SUM(avg_gfr), 0) * 100.0 / (COALESCE(SUM(avg_gfr), 0) + COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0))
+        ELSE 0 
+      END AS total_gvf,
+      CASE 
+        WHEN COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0) > 0 
+        THEN COALESCE(SUM(avg_wfr), 0) * 100.0 / (COALESCE(SUM(avg_ofr), 0) + COALESCE(SUM(avg_wfr), 0))
+        ELSE 0 
+      END AS total_wlr,
+      AVG(avg_pressure) AS avg_pressure,
+      AVG(avg_temp) AS avg_temp,
+      COUNT(DISTINCT device_id) as device_count
+    FROM device_data_minute
+    GROUP BY minute
+)
+SELECT * 
+FROM summed
+ORDER BY minute
     `;
 
-    const result = await database.query(query, [hierarchy_id]);
-    return result.rows;
+    const result = await database.query(aggQuery, [hierarchy_id]);
+
+    if (result.rows && result.rows.length > 0) {
+      return result.rows; // real historical data exists — return it
+    }
+
+    // --- Multi-point synthetic fallback (10 points, 1-minute interval) ---
+    // Uses device_latest values but repeats them across a 10-minute series so front-end can draw a line.
+    const fallbackQuery = `
+WITH RECURSIVE hierarchy_cte AS (
+    SELECT id FROM hierarchy WHERE id = $1
+    UNION ALL
+    SELECT h.id FROM hierarchy h JOIN hierarchy_cte c ON h.parent_id = c.id
+),
+devs AS (
+    SELECT serial_number FROM device WHERE hierarchy_id IN (SELECT id FROM hierarchy_cte)
+),
+latest AS (
+    SELECT dl.serial_number,
+           (dl.data->>'GFR')::numeric AS gfr,
+           (dl.data->>'GOR')::numeric AS gor,
+           (dl.data->>'OFR')::numeric AS ofr,
+           (dl.data->>'WFR')::numeric AS wfr,
+           (dl.data->>'GVF')::numeric AS gvf,
+           (dl.data->>'WLR')::numeric AS wlr,
+           (dl.data->>'PressureAvg')::numeric AS pressure,
+           (dl.data->>'TemperatureAvg')::numeric AS temp
+    FROM device_latest dl
+    WHERE dl.serial_number IN (SELECT serial_number FROM devs)
+)
+SELECT
+  gs AS minute,
+  COALESCE(SUM(latest.gfr),0) AS total_gfr,
+  COALESCE(SUM(latest.gor),0) AS total_gor,
+  COALESCE(SUM(latest.ofr),0) AS total_ofr,
+  COALESCE(SUM(latest.wfr),0) AS total_wfr,
+  CASE
+    WHEN COALESCE(SUM(latest.gfr),0) + COALESCE(SUM(latest.ofr),0) + COALESCE(SUM(latest.wfr),0) > 0
+    THEN COALESCE(SUM(latest.gfr),0) * 100.0 / (COALESCE(SUM(latest.gfr),0) + COALESCE(SUM(latest.ofr),0) + COALESCE(SUM(latest.wfr),0))
+    ELSE 0
+  END AS total_gvf,
+  CASE
+    WHEN COALESCE(SUM(latest.ofr),0) + COALESCE(SUM(latest.wfr),0) > 0
+    THEN COALESCE(SUM(latest.wfr),0) * 100.0 / (COALESCE(SUM(latest.ofr),0) + COALESCE(SUM(latest.wfr),0))
+    ELSE 0
+  END AS total_wlr,
+  AVG(latest.pressure) AS avg_pressure,
+  AVG(latest.temp) AS avg_temp,
+  COUNT(latest.serial_number) AS device_count
+FROM generate_series(now() - interval '9 minutes', now(), interval '1 minute') AS gs
+LEFT JOIN latest ON true
+GROUP BY gs
+ORDER BY gs;
+    `;
+
+    const fallbackResult = await database.query(fallbackQuery, [hierarchy_id]);
+    return fallbackResult.rows || [];
   }
 
-  static async getLatestDeviceData(device_id) {
+  static async getLatestDeviceData(serial_number) {
     const query = `
       SELECT 
         dd.*,
@@ -257,7 +307,7 @@ WITH RECURSIVE hierarchy_cte AS (
       LIMIT 1
     `;
 
-    const result = await database.query(query, [device_id]);
+    const result = await database.query(query, [serial_number]);
     return result.rows[0] || null;
   }
 
