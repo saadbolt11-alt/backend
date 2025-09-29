@@ -7,7 +7,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
-import { ExternalLink, Info, MoreHorizontal } from 'lucide-react';
+import { ExternalLink, Info, MoveHorizontal as MoreHorizontal } from 'lucide-react';
 import { DeviceChartData, HierarchyChartData } from '../../services/api';
 import { useTheme } from '../../hooks/useTheme';
 
