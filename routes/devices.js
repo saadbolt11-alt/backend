@@ -82,8 +82,8 @@ router.get('/hierarchy/:hierarchyId', protect, async (req, res) => {
         l.longitude,
         l.latitude,
         l.updated_at AS last_comm_time,
-        CASE 
-          WHEN (d.metadata->>'status') = 'active' THEN 'Online'
+          CASE 
+          WHEN l.updated_at >= now() - interval '5 minutes' THEN 'Online'
           ELSE 'Offline'
         END AS status,
         COALESCE((l.data->>'GFR')::numeric, 0) AS gfr,
@@ -111,8 +111,8 @@ router.get('/hierarchy/:hierarchyId', protect, async (req, res) => {
     // Add status filter
     if (status !== 'all') {
       const statusCondition = status === 'online' 
-        ? `(d.metadata->>'status') = 'active'`
-        : `(d.metadata->>'status') != 'active' OR (d.metadata->>'status') IS NULL`;
+               ? `l.updated_at >= now() - interval '5 minutes'`
+        : `(l.updated_at IS NULL OR l.updated_at < now() - interval '5 minutes')`;
       
       query += search ? ` AND ${statusCondition}` : ` WHERE ${statusCondition}`;
     }
@@ -142,7 +142,7 @@ router.get('/hierarchy/:hierarchyId', protect, async (req, res) => {
       )
       SELECT 
         COUNT(DISTINCT d.id) as total_devices,
-        COUNT(DISTINCT CASE WHEN (d.metadata->>'status') = 'active' THEN d.id END) as online_devices,
+        COUNT(DISTINCT CASE WHEN l.updated_at >= now() - interval '5 minutes' THEN d.id END) as online_devices,
         (SELECT COUNT(*) FROM device_alarms da 
          JOIN device dev ON da.device_serial = dev.serial_number 
          WHERE dev.hierarchy_id IN (SELECT id FROM hierarchy_cte)) as total_alarms,
@@ -356,7 +356,7 @@ router.get('/', protect, async (req, res) => {
     const statsQuery = `
       SELECT 
         COUNT(DISTINCT d.id) as total_devices,
-        COUNT(DISTINCT CASE WHEN (d.metadata->>'status') = 'active' THEN d.id END) as online_devices,
+        COUNT(DISTINCT CASE WHEN l.updated_at >= now() - interval '5 minutes' THEN d.id END) as online_devices,
         (SELECT COUNT(*) FROM device_alarms da 
          JOIN device dev ON da.device_serial = dev.serial_number 
          WHERE dev.company_id = $1) as total_alarms
@@ -470,7 +470,7 @@ router.get('/:id', protect, async (req, res) => {
         l.updated_at AS last_comm_time,
         l.received_at,
         CASE 
-          WHEN (d.metadata->>'status') = 'active' THEN 'Online'
+          WHEN l.updated_at >= now() - interval '5 minutes' THEN 'Online'
           ELSE 'Offline'
         END AS status,
         l.data AS latest_data
