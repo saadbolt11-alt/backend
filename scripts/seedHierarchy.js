@@ -227,19 +227,19 @@ const seedHierarchyData = async () => {
     }
 
     // Generate comprehensive device data for the last 24 hours
-    console.log('🔄 Generating device data for the last 24 hours...');
+    console.log('🔄 Generating device data for the last 30 days (1-minute intervals)...');
     
     const generateDeviceData = (deviceId, serialNumber, baseValues) => {
       const dataPoints = [];
       const now = new Date();
       
-      // Generate data for last 24 hours (every 5 minutes = 288 data points)
-      for (let i = 287; i >= 0; i--) {
-        const timestamp = new Date(now.getTime() - (i * 5 * 60 * 1000));
+      // Generate data for last 30 days (every 1 minute = 43,200 data points)
+      for (let i = 43199; i >= 0; i--) {
+        const timestamp = new Date(now.getTime() - (i * 1 * 60 * 1000));
         
         // Add some realistic variation to the data
         const variation = 0.95 + (Math.random() * 0.1); // ±5% variation
-        const timeVariation = Math.sin((i / 288) * 2 * Math.PI) * 0.05; // Daily cycle
+        const timeVariation = Math.sin((i / 1440) * 2 * Math.PI) * 0.05; // Daily cycle (1440 minutes per day)
         
         const data = {
           GFR: Math.round((baseValues.GFR * variation * (1 + timeVariation)) * 100) / 100,
@@ -288,7 +288,7 @@ const seedHierarchyData = async () => {
     };
 
     // Generate data for MPFM devices only (they have comprehensive flow data)
-    const mpfmDevices = [1, 4, 7, 10, 13, 15, 18, 20, 23, 25, 28, 30, 33, 35, 38, 40, 42];
+    const mpfmDevices = [25]; // Only seed data for MPFM-SHR-A1 device
     
     for (const deviceId of mpfmDevices) {
       if (deviceBaseValues[deviceId]) {
@@ -360,6 +360,7 @@ const seedHierarchyData = async () => {
     `);
 
     console.log('\n📋 Comprehensive Hierarchy Structure:');
+    console.log(`📊 Generated ${43200} data points for MPFM-SHR-A1 device (30 days, 1-minute intervals)`);
     let currentCompany = '';
     
     hierarchyResult.rows.forEach(row => {
